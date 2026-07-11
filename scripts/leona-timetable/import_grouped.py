@@ -250,13 +250,38 @@ def ensure_labels(base_url: str, token: str) -> dict[str, int]:
 
 
 def existing_import_keys(base_url: str, token: str) -> set[str]:
+    return set(existing_imported_chores(base_url, token))
+
+
+def existing_imported_chores(base_url: str, token: str) -> dict[str, dict[str, Any]]:
     chores = unwrap_items(json_request("GET", base_url, "/api/v1/chores/?includeArchived=true", token=token))
-    keys: set[str] = set()
+    by_key: dict[str, dict[str, Any]] = {}
     for chore in chores:
         match = re.search(r"importKey=([^\s|]+)", chore.get("description") or "")
         if match:
-            keys.add(match.group(1))
-    return keys
+            by_key[match.group(1)] = chore
+    return by_key
+
+
+def get_chore(base_url: str, token: str, chore_id: int) -> dict[str, Any]:
+    response = json_request("GET", base_url, f"/api/v1/chores/{chore_id}", token=token)
+    if isinstance(response, dict):
+        return response.get("res", response)
+    raise RuntimeError(f"Could not read chore #{chore_id}: {response!r}")
+
+
+def set_due_date(base_url: str, token: str, chore_id: int, due_date: str) -> None:
+    chore = get_chore(base_url, token, chore_id)
+    updated_at = chore.get("updatedAt")
+    if not updated_at:
+        raise RuntimeError(f"Chore #{chore_id} does not include updatedAt; cannot set due date safely.")
+    json_request(
+        "PUT",
+        base_url,
+        f"/api/v1/chores/{chore_id}/dueDate",
+        token=token,
+        payload={"dueDate": due_date, "updatedAt": updated_at},
+    )
 
 
 def create_chore(base_url: str, token: str, item: dict[str, Any], user_id: int, project_id: int, label_ids: dict[str, int]) -> int:
@@ -287,7 +312,9 @@ def create_chore(base_url: str, token: str, item: dict[str, Any], user_id: int, 
     }
     created = json_request("POST", base_url, "/api/v1/chores/", token=token, payload=payload)
     if isinstance(created, dict) and "res" in created:
-        return int(created["res"])
+        chore_id = int(created["res"])
+        set_due_date(base_url, token, chore_id, item["nextDueDate"])
+        return chore_id
     raise RuntimeError(f"Chore creation for {item['name']!r} did not return an ID: {created!r}")
 
 
@@ -319,12 +346,15 @@ def main() -> int:
     user_id = int(profile["id"])
     project_id = ensure_project(args.base_url, token)
     label_ids = ensure_labels(args.base_url, token)
-    seen_keys = existing_import_keys(args.base_url, token)
+    seen_chores = existing_imported_chores(args.base_url, token)
 
     created: list[tuple[str, int]] = []
     skipped: list[str] = []
     for item in preview:
-        if item["importKey"] in seen_keys:
+        existing = seen_chores.get(item["importKey"])
+        if existing:
+            if not existing.get("nextDueDate"):
+                set_due_date(args.base_url, token, int(existing["id"]), item["nextDueDate"])
             skipped.append(item["name"])
             continue
         chore_id = create_chore(args.base_url, token, item, user_id, project_id, label_ids)
