@@ -1,21 +1,22 @@
 ---
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: donetick-core
+  donetick:
+    image: donetick/donetick
+    container_name: donetick
     restart: unless-stopped
-
-    volumes:
-      # sqlite database:
-      - ./data:/usr/src/app/data
-
     ports:
-      - "8085:8000"
+      - "0.0.0.0:2021:2021"
+    volumes:
+      - ./data:/donetick-data
+      - ./config:/config
     environment:
-      - DT_ENV=prod
-    hostname: donetick-core
-    command: ["/donetick-core"]  # Command to execute your binary inside the container
-networks:
-  default:
+      - DT_ENV=selfhosted
+      - DT_SQLITE_PATH=/donetick-data/donetick.db
+      - DT_JWT_SECRET=local_dev_only_please_change_6cc348c1a5d24f5a
+      - TZ=Etc/UTC
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:2021/api/v1/health || exit 1
+      start_period: 1m
+      timeout: 5s
+      interval: 1m
+      retries: 3
