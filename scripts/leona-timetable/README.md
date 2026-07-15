@@ -17,6 +17,8 @@ $env:DONETICK_PASSWORD = "your-password"
 
 ## Grouped importer
 
+> Historical only: do not run the grouped importer with `--apply` on the itemized-only installation. The module remains because the itemized importer reuses its workbook parsing, schedule definitions, and API helpers.
+
 `import_grouped.py` creates or reuses:
 
 - Project: `Leona Household Timetable`
@@ -39,9 +41,10 @@ python .\scripts\leona-timetable\import_grouped.py --apply
 
 ## Donetick behavior notes
 
-- The project URL, such as `/chores?project=1`, shows all chores in that project.
+- Project URLs, such as `/chores?project=2`, show all chores in that project.
 - Tasks whose due time has already passed today appear under `Overdue`.
-- A useful pinned filter for the grouped project is `project is Leona Household Timetable` plus `dueDate isOverdue`.
+- For the itemized setup, use `http://localhost:2021/chores?project=2` as the stable project view.
+- Do not force `filterId=due-today`; Donetick's strict today filter can make the page look like it contains only overdue chores once scheduled times have passed.
 
 ## Itemized importer
 
@@ -70,3 +73,28 @@ Special split rule:
 - `Clean the master bedroom: Reset the bed suit every day, clean the toilet every other day`
   - `Reset the bed suit`: inherits the original weekday `08:00` schedule
   - `Clean the toilet`: uses Donetick interval scheduling every 2 days at `08:00`
+
+## Stable itemized view
+
+The Docker setup exposes Donetick directly on `0.0.0.0:2021`, without an Nginx gateway or injected default-view script. This keeps browser loading simple and avoids forcing the app into Donetick's strict `due-today` filter.
+
+Recommended URLs:
+
+```text
+http://localhost:2021
+http://localhost:2021/chores?project=2
+http://<your-lan-ip>:2021/chores?project=2
+```
+
+## Optional daily itemized rollover
+
+Donetick advances a recurring chore after it is completed or skipped, but it does not automatically move an unfinished occurrence out of the past. The optional itemized rollover reconciler moves only stale overdue itemized occurrences to today or the next valid schedule. It never changes a chore that is already due today or in the future.
+
+If you want to use it, store a Donetick API token outside Git in `data/secrets/donetick_api_token`, then review the planned changes or apply one pass with:
+
+```powershell
+python .\scripts\leona-timetable\rollover_itemized.py --dry-run
+python .\scripts\leona-timetable\rollover_itemized.py --once
+```
+
+The script validates the itemized project and all 71 unique import keys before it updates anything. It is not enabled in `docker-compose.yaml` by default so browser access remains independent of the rollover utility.
