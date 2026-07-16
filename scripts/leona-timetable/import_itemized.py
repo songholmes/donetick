@@ -95,21 +95,72 @@ def unique_labels(labels: list[str]) -> list[str]:
 
 
 def labels_for_item(block_labels: list[str], name: str) -> list[str]:
-    labels = [label for label in block_labels if label != "Optional"]
+    labels = [label for label in block_labels if label in {"Weekday", "Weekend", "Morning", "Evening"}]
     lower = name.lower()
     if any(marker in lower for marker in ("optional", "option ", "if needed", "as needed", "if baby", "if we ", "unless ", "if you finish")):
         labels.append("Optional")
-    if any(marker in lower for marker in ("clean", "wash", "vacuum", "vaccum", "mop", "tidy", "fold", "trash", "bedsheet", "bed suit", "toilet")):
+    if any(
+        marker in lower
+        for marker in (
+            "clean",
+            "wash",
+            "vacuum",
+            "vaccum",
+            "mop",
+            "tidy",
+            "fold",
+            "trash",
+            "bin",
+            "bedsheet",
+            "bed suit",
+            "toilet",
+            "bathroom",
+            "shower",
+            "mirror",
+            "window",
+            "door",
+            "shoe cabinet",
+            "dish",
+            "dishes",
+            "bowl",
+            "bowls",
+            "kitchen",
+        )
+    ):
         labels.append("Cleaning")
-    if any(marker in lower for marker in ("breakfast", "lunch", "dinner", "cook", "kitchen", "dish", "dishes", "bowl", "groceries", "ingredients")):
+    if any(
+        marker in lower
+        for marker in (
+            "prepare breakfast",
+            "prepare lunch",
+            "prepare dinner",
+            "cook",
+            "cooking",
+            "ingredients",
+        )
+    ):
         labels.append("Cooking")
-    if any(marker in lower for marker in ("baby", "uniform", "school", "bottle", "sterilize", "stroller", "high chair")):
+    if any(
+        marker in lower
+        for marker in (
+            "baby",
+            "uniform",
+            "school",
+            "bottle",
+            "sterilize",
+            "stroller",
+            "high chair",
+            "her bottom",
+            "her teeth",
+            "her hair",
+        )
+    ):
         labels.append("Baby")
     if any(marker in lower for marker in ("miya", "rabbit", "pet")):
         labels.append("Pets")
     if any(marker in lower for marker in ("buy", "market", "ntuc", "grocery list", "groceries")):
         labels.append("Errands")
-    if any(marker in lower for marker in ("sleep", "next day", "back to your room")):
+    if any(marker in lower for marker in ("sleep", "back to your room")):
         labels.append("Evening")
     return unique_labels(labels)
 

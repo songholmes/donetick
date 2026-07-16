@@ -4,7 +4,7 @@ import unittest
 
 from openpyxl import Workbook
 
-from import_itemized import due_time_from_source_range, parse_time_range, resolve_assignee_user_id
+from import_itemized import due_time_from_source_range, labels_for_item, parse_time_range, resolve_assignee_user_id
 
 
 class EndTimeParsingTests(unittest.TestCase):
@@ -67,6 +67,44 @@ class AssigneeResolutionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "was not found"):
             resolve_assignee_user_id(members, "songholmes_leona")
+
+
+class ItemLabelTests(unittest.TestCase):
+    def test_self_prep_does_not_inherit_task_categories(self) -> None:
+        labels = labels_for_item(["Weekday", "Morning", "Baby", "Cooking", "Pets"], "Wake up and get yourself ready")
+
+        self.assertEqual(labels, ["Weekday", "Morning"])
+
+    def test_optional_breakfast_is_not_cooking(self) -> None:
+        labels = labels_for_item(["Weekday", "Cleaning", "Optional"], "Have your breakfast (optional 2)")
+
+        self.assertEqual(labels, ["Weekday", "Optional"])
+
+    def test_cooking_and_kitchen_cleanup_are_specific(self) -> None:
+        labels = labels_for_item(["Weekday", "Cooking", "Errands"], "Cook Dinner and tidy up the kitchen")
+
+        self.assertEqual(labels, ["Weekday", "Cleaning", "Cooking"])
+
+    def test_baby_play_does_not_become_cooking_from_dinner_word(self) -> None:
+        labels = labels_for_item(
+            ["Weekday", "Baby"],
+            "Or play with baby in case Sir and Madam didn't finish dinner",
+        )
+
+        self.assertEqual(labels, ["Weekday", "Baby"])
+
+    def test_dinner_dishes_do_not_inherit_baby_or_pets(self) -> None:
+        labels = labels_for_item(
+            ["Weekday", "Baby", "Cleaning", "Pets", "Evening"],
+            "Tidy up the dished and bowls from dinner",
+        )
+
+        self.assertEqual(labels, ["Weekday", "Evening", "Cleaning"])
+
+    def test_walk_miya_is_pets(self) -> None:
+        labels = labels_for_item(["Weekend", "Optional"], "Walk Miya if you finish early.")
+
+        self.assertEqual(labels, ["Weekend", "Optional", "Pets"])
 
 
 if __name__ == "__main__":
