@@ -45,6 +45,12 @@ python .\scripts\leona-timetable\import_grouped.py --apply
 - Tasks whose due time has already passed today appear under `Overdue`.
 - For the itemized setup, use `http://localhost:2021/chores?project=2` as the stable project view.
 - Do not force `filterId=due-today`; Donetick's strict today filter can make the page look like it contains only overdue chores once scheduled times have passed.
+- Donetick stores one due datetime per chore, not a separate start/end window.
+  The itemized importer uses the timetable block end time as the due datetime,
+  so a task becomes overdue after its work window ends.
+- On chore detail pages, use the browser or mobile system Back action to return
+  to `/chores?project=2`. The top-left icon in Donetick is the menu, not a
+  back button.
 
 ## Itemized importer
 
@@ -54,7 +60,10 @@ python .\scripts\leona-timetable\import_grouped.py --apply
 - The same label set as the grouped importer
 - One chore per timetable bullet item
 
-Each itemized chore inherits the day pattern and due time from its timetable block. Import markers use the separate `leona-v2-itemized-...` namespace so itemized chores do not collide with grouped chores.
+Each itemized chore inherits the day pattern from its timetable block and uses
+the block end time as its due time. Import markers use the separate
+`leona-v2-itemized-...` namespace so itemized chores do not collide with
+grouped chores.
 
 Dry run:
 
@@ -66,6 +75,13 @@ Apply:
 
 ```powershell
 python .\scripts\leona-timetable\import_itemized.py --apply
+```
+
+Reset and recreate existing itemized chores, discarding old Leona itemized
+history:
+
+```powershell
+python .\scripts\leona-timetable\import_itemized.py --apply --reset-existing
 ```
 
 Special split rule:

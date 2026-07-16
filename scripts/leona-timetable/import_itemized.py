@@ -19,6 +19,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
+from openpyxl.utils.cell import range_boundaries
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -57,8 +58,10 @@ class ItemizedChore:
     import_key: str
     name: str
     days: list[str]
+    start_time: str
     due_time: str
     next_due_date: str
+    source_window: str
     source_range: str
     source_bullet: str
     labels: list[str]
@@ -108,6 +111,48 @@ def labels_for_item(block_labels: list[str], name: str) -> list[str]:
     if any(marker in lower for marker in ("sleep", "next day", "back to your room")):
         labels.append("Evening")
     return unique_labels(labels)
+
+
+def split_source_range(source_range: str) -> str:
+    if "!" not in source_range:
+        return source_range
+    return source_range.split("!", 1)[1]
+
+
+def parse_time_range(value: str) -> tuple[str, str]:
+    match = re.search(r"(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})", value)
+    if not match:
+        raise RuntimeError(f"Could not parse timetable range from {value!r}")
+    start, end = match.groups()
+    return normalize_hhmm(start), normalize_hhmm(end)
+
+
+def normalize_hhmm(value: str) -> str:
+    hour, minute = value.split(":", 1)
+    return f"{int(hour):02d}:{minute}"
+
+
+def due_time_from_source_range(ws: Any, source_range: str, display_start_time: str | None = None) -> tuple[str, str]:
+    """Return the end time for the source range and the displayed source window.
+
+    Donetick has one due datetime, so itemized chores use the end of the source
+    timetable block as the overdue threshold. For merged timetable blocks, the
+    source range can span multiple rows; the final row determines the end time.
+    """
+
+    cell_range = split_source_range(source_range)
+    min_col, min_row, max_col, max_row = range_boundaries(cell_range)
+    del min_col, max_col
+
+    first_range = merged_value(ws, f"A{min_row}")
+    last_range = merged_value(ws, f"A{max_row}")
+    if not first_range or not last_range:
+        raise RuntimeError(f"Could not read time window for {source_range}")
+
+    start_time_from_sheet, _ = parse_time_range(first_range)
+    _, end_time = parse_time_range(last_range)
+    display_start = normalize_hhmm(display_start_time) if display_start_time else start_time_from_sheet
+    return end_time, f"{display_start} - {end_time}"
 
 
 def next_interval_due_iso(days: list[str], hhmm: str, tz_name: str) -> str:
@@ -173,6 +218,7 @@ def build_itemized_preview(excel_path: Path) -> list[dict[str, Any]]:
         bullets = split_subtasks(raw_text)
         if not bullets:
             raise RuntimeError(f"No bullet items extracted for {spec.key} from {spec.value_cell}")
+        due_time, source_window = due_time_from_source_range(ws, spec.source_range, spec.due_time)
 
         block_slug = spec.key.removeprefix("leona-v2-")
         for bullet_index, bullet in enumerate(bullets, start=1):
@@ -180,26 +226,29 @@ def build_itemized_preview(excel_path: Path) -> list[dict[str, Any]]:
             for expanded in expanded_items:
                 import_key = f"{IMPORT_PREFIX}-{block_slug}-{expanded['key_suffix']}"
                 if expanded["cadence"] == "interval":
-                    next_due = next_interval_due_iso(spec.days, spec.due_time, TIMEZONE)
+                    next_due = next_interval_due_iso(spec.days, due_time, TIMEZONE)
                     frequency_type = "interval"
                     frequency = int(expanded["frequency"])
                     frequency_metadata = interval_frequency_metadata(next_due, str(expanded["unit"]))
                 else:
-                    next_due = next_due_iso(spec.days, spec.due_time, TIMEZONE)
+                    next_due = next_due_iso(spec.days, due_time, TIMEZONE)
                     frequency_type = "days_of_the_week"
                     frequency = 1
                     frequency_metadata = block_frequency_metadata(spec.days, next_due)
                 description = (
                     f"Imported itemized from Leona's Time Table.xlsx | {spec.source_range} | "
-                    f"sourceBullet={expanded['source_bullet']} | importKey={import_key}"
+                    f"sourceWindow={source_window} | sourceBullet={expanded['source_bullet']} | "
+                    f"importKey={import_key}"
                 )
                 preview.append(
                     {
                         "importKey": import_key,
                         "name": expanded["name"],
                         "days": spec.days,
-                        "dueTime": spec.due_time,
+                        "startTime": spec.due_time,
+                        "dueTime": due_time,
                         "nextDueDate": next_due,
+                        "sourceWindow": source_window,
                         "sourceRange": spec.source_range,
                         "sourceBullet": expanded["source_bullet"],
                         "labels": expanded["labels"],
@@ -224,9 +273,10 @@ def print_preview(preview: list[dict[str, Any]]) -> None:
         cadence = item["frequencyType"]
         if cadence == "interval":
             cadence = f"interval/{item['frequency']} {item['frequencyMetadata'].get('unit')}"
-        print(f"{idx:02d}. {item['name']} [{day_text} {item['dueTime']} {cadence}]")
+        print(f"{idx:02d}. {item['name']} [{day_text} {item['startTime']}-{item['dueTime']} due@{item['dueTime']} {cadence}]")
         print(f"    key: {item['importKey']}")
         print(f"    source: {item['sourceRange']}")
+        print(f"    window: {item['sourceWindow']}")
         print(f"    labels: {labels}")
         print()
 
@@ -263,6 +313,47 @@ def ensure_labels(base_url: str, token: str) -> dict[str, int]:
     return by_name
 
 
+def existing_itemized_chores(base_url: str, token: str, project_id: int) -> dict[str, dict[str, Any]]:
+    imported = existing_imported_chores(base_url, token)
+    return {
+        key: chore
+        for key, chore in imported.items()
+        if key.startswith(f"{IMPORT_PREFIX}-") and int(chore.get("projectId") or 0) == project_id
+    }
+
+
+def delete_chore(base_url: str, token: str, chore_id: int) -> None:
+    json_request("DELETE", base_url, f"/api/v1/chores/{chore_id}", token=token)
+
+
+def delete_chore_history(base_url: str, token: str, chore_id: int, history_id: int) -> None:
+    json_request("DELETE", base_url, f"/api/v1/chores/{chore_id}/history/{history_id}", token=token)
+
+
+def delete_reschedule_histories(base_url: str, token: str, chore_ids: list[int]) -> list[tuple[int, int]]:
+    deleted: list[tuple[int, int]] = []
+    for chore_id in chore_ids:
+        histories = unwrap_items(json_request("GET", base_url, f"/api/v1/chores/{chore_id}/history", token=token))
+        for history in histories:
+            if int(history.get("status") or -1) != 6:
+                continue
+            history_id = int(history["id"])
+            delete_chore_history(base_url, token, chore_id, history_id)
+            deleted.append((chore_id, history_id))
+    return deleted
+
+
+def reset_existing_itemized(base_url: str, token: str, project_id: int) -> list[tuple[str, int, str]]:
+    existing = existing_itemized_chores(base_url, token, project_id)
+    deleted: list[tuple[str, int, str]] = []
+    for key, chore in sorted(existing.items(), key=lambda entry: int(entry[1]["id"])):
+        chore_id = int(chore["id"])
+        name = str(chore.get("name") or "")
+        delete_chore(base_url, token, chore_id)
+        deleted.append((key, chore_id, name))
+    return deleted
+
+
 def create_chore(base_url: str, token: str, item: dict[str, Any], user_id: int, project_id: int, label_ids: dict[str, int]) -> int:
     payload = {
         "name": item["name"],
@@ -297,6 +388,11 @@ def main() -> int:
     parser.add_argument("--excel", default=DEFAULT_EXCEL)
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--apply", action="store_true", help="Actually create missing project/labels/chores in Donetick.")
+    parser.add_argument(
+        "--reset-existing",
+        action="store_true",
+        help="With --apply, delete existing Leona itemized chores in the target project before recreating them.",
+    )
     parser.add_argument("--username", default=os.environ.get("DONETICK_USERNAME"))
     parser.add_argument("--password", default=os.environ.get("DONETICK_PASSWORD"))
     parser.add_argument("--preview-json", default="")
@@ -309,6 +405,8 @@ def main() -> int:
         Path(args.preview_json).write_text(json.dumps(preview, indent=2, ensure_ascii=False), encoding="utf-8")
     print_preview(preview)
 
+    if args.reset_existing and not args.apply:
+        raise RuntimeError("--reset-existing requires --apply.")
     if not args.apply:
         print("Dry run only. Re-run with --apply to create missing itemized chores.")
         return 0
@@ -320,7 +418,10 @@ def main() -> int:
     user_id = int(profile["id"])
     project_id = ensure_project(args.base_url, token)
     label_ids = ensure_labels(args.base_url, token)
-    seen_chores = existing_imported_chores(args.base_url, token)
+    deleted: list[tuple[str, int, str]] = []
+    if args.reset_existing:
+        deleted = reset_existing_itemized(args.base_url, token, project_id)
+    seen_chores = existing_itemized_chores(args.base_url, token, project_id)
 
     created: list[tuple[str, int]] = []
     skipped: list[str] = []
@@ -334,7 +435,16 @@ def main() -> int:
         chore_id = create_chore(args.base_url, token, item, user_id, project_id, label_ids)
         created.append((item["name"], chore_id))
 
+    cleaned_histories: list[tuple[int, int]] = []
+    if args.reset_existing and created:
+        cleaned_histories = delete_reschedule_histories(args.base_url, token, [chore_id for _, chore_id in created])
+
     print()
+    if args.reset_existing:
+        print(f"Deleted existing itemized chores: {len(deleted)}")
+        for _, chore_id, name in deleted:
+            print(f"  - #{chore_id}: {name}")
+        print(f"Deleted import-created reschedule histories: {len(cleaned_histories)}")
     print(f"Created chores: {len(created)}")
     for name, chore_id in created:
         print(f"  + #{chore_id}: {name}")
