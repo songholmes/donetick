@@ -117,6 +117,27 @@ http://localhost:2021/chores?project=2
 http://<your-lan-ip>:2021/chores?project=2
 ```
 
+## Set the itemized project as default
+
+Donetick stores a backend `is_default` flag on projects, but the public project
+API does not expose changing that flag. For this local, not-yet-live setup,
+`set_default_project.py` safely updates SQLite directly after verifying the
+Leona itemized project and its 71 imported chores.
+
+Dry run:
+
+```powershell
+python .\scripts\leona-timetable\set_default_project.py
+```
+
+Apply while Donetick is stopped:
+
+```powershell
+docker compose stop donetick
+python .\scripts\leona-timetable\set_default_project.py --apply
+docker compose up -d
+```
+
 ## Optional daily itemized rollover
 
 Donetick advances a recurring chore after it is completed or skipped, but it does not automatically move an unfinished occurrence out of the past. The optional itemized rollover reconciler moves only stale overdue itemized occurrences to today or the next valid schedule. It never changes a chore that is already due today or in the future.
