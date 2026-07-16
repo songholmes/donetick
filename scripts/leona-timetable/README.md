@@ -15,6 +15,14 @@ $env:DONETICK_USERNAME = "your-user"
 $env:DONETICK_PASSWORD = "your-password"
 ```
 
+For the current household setup, Sir logs in as the master/admin account and
+Leona receives the timetable chores as a child/member account:
+
+```powershell
+$env:DONETICK_USERNAME = "songholmes"
+$env:DONETICK_ASSIGNEE = "songholmes_leona"
+```
+
 ## Grouped importer
 
 > Historical only: do not run the grouped importer with `--apply` on the itemized-only installation. The module remains because the itemized importer reuses its workbook parsing, schedule definitions, and API helpers.
@@ -83,6 +91,13 @@ history:
 ```powershell
 python .\scripts\leona-timetable\import_itemized.py --apply --reset-existing
 ```
+
+By default, the itemized importer assigns chores to `songholmes_leona`, whose
+display name is `Leona`. You can override this with `DONETICK_ASSIGNEE` or
+`--assignee`; the importer matches an exact username first, then an exact
+display name. The API session still logs in with `DONETICK_USERNAME`, so when
+Sir runs the importer, Sir remains the creator/admin/master while Leona is the
+sole task assignee.
 
 Special split rule:
 

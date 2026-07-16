@@ -49,6 +49,7 @@ PROJECT_NAME = "Leona Household Timetable - Itemized"
 PROJECT_DESCRIPTION = "Imported itemized schedule from Leona's Time Table.xlsx"
 IMPORT_PREFIX = "leona-v2-itemized"
 EXPECTED_ITEMIZED_COUNT = 71
+DEFAULT_ASSIGNEE = "songholmes_leona"
 
 Cadence = Literal["block", "interval"]
 
@@ -343,6 +344,39 @@ def delete_reschedule_histories(base_url: str, token: str, chore_ids: list[int])
     return deleted
 
 
+def get_circle_members(base_url: str, token: str) -> list[dict[str, Any]]:
+    response = json_request("GET", base_url, "/api/v1/circles/members", token=token)
+    return unwrap_items(response)
+
+
+def resolve_assignee_user_id(members: list[dict[str, Any]], assignee: str) -> int:
+    normalized = assignee.strip().lower()
+    if not normalized:
+        raise RuntimeError("Assignee cannot be empty.")
+
+    username_matches = [
+        member for member in members if str(member.get("username") or "").strip().lower() == normalized
+    ]
+    if len(username_matches) == 1:
+        return int(username_matches[0]["userId"])
+    if len(username_matches) > 1:
+        raise RuntimeError(f"Assignee username {assignee!r} matched multiple circle members.")
+
+    display_name_matches = [
+        member for member in members if str(member.get("displayName") or "").strip().lower() == normalized
+    ]
+    if len(display_name_matches) == 1:
+        return int(display_name_matches[0]["userId"])
+    if len(display_name_matches) > 1:
+        names = ", ".join(str(member.get("username") or member.get("userId")) for member in display_name_matches)
+        raise RuntimeError(f"Assignee display name {assignee!r} matched multiple circle members: {names}")
+
+    available = ", ".join(
+        f"{member.get('username')} ({member.get('displayName')})" for member in members
+    )
+    raise RuntimeError(f"Assignee {assignee!r} was not found in circle members. Available: {available}")
+
+
 def reset_existing_itemized(base_url: str, token: str, project_id: int) -> list[tuple[str, int, str]]:
     existing = existing_itemized_chores(base_url, token, project_id)
     deleted: list[tuple[str, int, str]] = []
@@ -354,7 +388,7 @@ def reset_existing_itemized(base_url: str, token: str, project_id: int) -> list[
     return deleted
 
 
-def create_chore(base_url: str, token: str, item: dict[str, Any], user_id: int, project_id: int, label_ids: dict[str, int]) -> int:
+def create_chore(base_url: str, token: str, item: dict[str, Any], assignee_user_id: int, project_id: int, label_ids: dict[str, int]) -> int:
     payload = {
         "name": item["name"],
         "frequencyType": item["frequencyType"],
@@ -362,8 +396,8 @@ def create_chore(base_url: str, token: str, item: dict[str, Any], user_id: int, 
         "frequencyMetadata": item["frequencyMetadata"],
         "nextDueDate": item["nextDueDate"],
         "isRolling": False,
-        "assignedTo": user_id,
-        "assignees": [{"userId": user_id}],
+        "assignedTo": assignee_user_id,
+        "assignees": [{"userId": assignee_user_id}],
         "assignStrategy": "keep_last_assigned",
         "notification": False,
         "notificationMetadata": None,
@@ -395,6 +429,11 @@ def main() -> int:
     )
     parser.add_argument("--username", default=os.environ.get("DONETICK_USERNAME"))
     parser.add_argument("--password", default=os.environ.get("DONETICK_PASSWORD"))
+    parser.add_argument(
+        "--assignee",
+        default=os.environ.get("DONETICK_ASSIGNEE", DEFAULT_ASSIGNEE),
+        help="Circle member username or display name to assign imported chores to.",
+    )
     parser.add_argument("--preview-json", default="")
     args = parser.parse_args()
 
@@ -415,7 +454,9 @@ def main() -> int:
 
     token = login(args.base_url, args.username, args.password)
     profile = get_profile(args.base_url, token)
-    user_id = int(profile["id"])
+    creator_user_id = int(profile["id"])
+    members = get_circle_members(args.base_url, token)
+    assignee_user_id = resolve_assignee_user_id(members, args.assignee)
     project_id = ensure_project(args.base_url, token)
     label_ids = ensure_labels(args.base_url, token)
     deleted: list[tuple[str, int, str]] = []
@@ -432,7 +473,7 @@ def main() -> int:
                 set_due_date(args.base_url, token, int(existing["id"]), item["nextDueDate"])
             skipped.append(item["name"])
             continue
-        chore_id = create_chore(args.base_url, token, item, user_id, project_id, label_ids)
+        chore_id = create_chore(args.base_url, token, item, assignee_user_id, project_id, label_ids)
         created.append((item["name"], chore_id))
 
     cleaned_histories: list[tuple[int, int]] = []
@@ -445,6 +486,7 @@ def main() -> int:
         for _, chore_id, name in deleted:
             print(f"  - #{chore_id}: {name}")
         print(f"Deleted import-created reschedule histories: {len(cleaned_histories)}")
+    print(f"Logged in as user #{creator_user_id}; assigned imported chores to user #{assignee_user_id}.")
     print(f"Created chores: {len(created)}")
     for name, chore_id in created:
         print(f"  + #{chore_id}: {name}")

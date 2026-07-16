@@ -4,7 +4,7 @@ import unittest
 
 from openpyxl import Workbook
 
-from import_itemized import due_time_from_source_range, parse_time_range
+from import_itemized import due_time_from_source_range, parse_time_range, resolve_assignee_user_id
 
 
 class EndTimeParsingTests(unittest.TestCase):
@@ -43,6 +43,30 @@ class EndTimeParsingTests(unittest.TestCase):
 
     def test_time_range_normalizes_single_digit_hour(self) -> None:
         self.assertEqual(parse_time_range("6:00 - 7:00"), ("06:00", "07:00"))
+
+
+class AssigneeResolutionTests(unittest.TestCase):
+    def test_username_match_wins(self) -> None:
+        members = [
+            {"userId": 1, "username": "songholmes", "displayName": "Sir"},
+            {"userId": 2, "username": "songholmes_leona", "displayName": "Leona"},
+        ]
+
+        self.assertEqual(resolve_assignee_user_id(members, "songholmes_leona"), 2)
+
+    def test_display_name_match_is_supported(self) -> None:
+        members = [
+            {"userId": 1, "username": "songholmes", "displayName": "Sir"},
+            {"userId": 2, "username": "songholmes_leona", "displayName": "Leona"},
+        ]
+
+        self.assertEqual(resolve_assignee_user_id(members, "Leona"), 2)
+
+    def test_missing_assignee_fails_clearly(self) -> None:
+        members = [{"userId": 1, "username": "songholmes", "displayName": "Sir"}]
+
+        with self.assertRaisesRegex(RuntimeError, "was not found"):
+            resolve_assignee_user_id(members, "songholmes_leona")
 
 
 if __name__ == "__main__":
